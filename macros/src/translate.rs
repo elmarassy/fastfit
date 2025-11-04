@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::{
     Model,
@@ -9,32 +9,26 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::Ident;
 
-pub fn translate_rust(
-    graph: &Graph,
-    fn_name: String,
-    gradient: bool,
-    hessian: bool,
-) -> TokenStream {
+pub fn translate_rust(graph: &Graph, fn_name: String, gradient: bool, hessian: bool) -> TokenStream {
     let mut num_params: usize = 0;
     let mut num_data: usize = 0;
 
     let eval_order = graph.order();
 
-    let node_name = |node: *const Node| format_ident!("v{}", node as usize);
+    let node_name = |node: &Rc<Node>| format_ident!("v{}", node.as_ref() as *const Node as usize);
 
     let code: Vec<_> = eval_order
         .iter()
-        .map(|&node| {
+        .map(|node| {
             let result_name = node_name(node);
 
-            match &unsafe { &*node }.interior {
+            match &node.interior {
                 NodeType::Constant(number) => {
                     let value = number.value;
                     quote! { let #result_name = #value; }
                 }
 
                 NodeType::Variable(variable) => {
-                    let name = &variable.name;
                     if variable.parameter {
                         num_params += 1;
                         let parameter_index = variable.index;
@@ -45,17 +39,10 @@ pub fn translate_rust(
                         quote! { let #result_name = data[#data_index]; }
                     }
                 }
-                NodeType::Unary(u) => u
-                    .operation
-                    .generate_rust(result_name, node_name(u.argument)),
-                NodeType::Binary(b) => {
-                    b.operation
-                        .generate_rust(result_name, node_name(b.left), node_name(b.right))
-                }
+                NodeType::Unary(u) => u.operation.generate_rust(result_name, node_name(&u.argument)),
+                NodeType::Binary(b) => b.operation.generate_rust(result_name, node_name(&b.left), node_name(&b.right)),
                 NodeType::Collection(_) => {
-                    panic!(
-                        "unable to generate rust code, collections should not appear in final graph"
-                    );
+                    panic!("unable to generate rust code, collections should not appear in final graph");
                 }
             }
         })
@@ -67,20 +54,12 @@ pub fn translate_rust(
         data: [Float; #num_params]
     };
 
-    let final_value_name = node_name(graph.value.unwrap());
+    let final_value_name = node_name(&graph.value.as_ref().unwrap());
     let fn_name = syn::Ident::new(&fn_name, Span::call_site());
     if gradient {
-        let gradient_names = graph
-            .gradient
-            .iter()
-            .map(|&id| node_name(id))
-            .collect::<Vec<Ident>>();
+        let gradient_names = graph.gradient.iter().map(|id| node_name(id)).collect::<Vec<Ident>>();
         if hessian {
-            let hessian_names = graph
-                .hessian
-                .iter()
-                .map(|&id| node_name(id))
-                .collect::<Vec<Ident>>();
+            let hessian_names = graph.hessian.iter().map(|id| node_name(id)).collect::<Vec<Ident>>();
             let num_hess = num_params * (num_params + 1) / 2 as usize;
             let signature = quote! {
                 pub fn #fn_name(#parameters, #data) -> (f64, [f64; #num_params], [f64; #num_hess])
@@ -109,11 +88,7 @@ pub fn translate_rust(
         }
     } else {
         if hessian {
-            let hessian_names = graph
-                .hessian
-                .iter()
-                .map(|&id| node_name(id))
-                .collect::<Vec<Ident>>();
+            let hessian_names = graph.hessian.iter().map(|id| node_name(id)).collect::<Vec<Ident>>();
             let num_hess = num_params * (num_params + 1) / 2 as usize;
             let signature = quote! {
                 pub fn #fn_name(#parameters, #data) -> (f64, [f64; #num_hess])

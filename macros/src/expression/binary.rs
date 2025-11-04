@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
@@ -18,104 +20,93 @@ pub(crate) enum BinaryOp {
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct Binary {
     pub(crate) operation: BinaryOp,
-    pub(crate) left: *const Node,
-    pub(crate) right: *const Node,
+    pub(crate) left: Rc<Node>,
+    pub(crate) right: Rc<Node>,
 }
 
 impl Binary {
-    pub(crate) fn new(
-        graph: &mut Graph,
-        operation: BinaryOp,
-        left: *const Node,
-        right: *const Node,
-    ) -> *const Node {
-        let leftref = unsafe { &*left };
-        let rightref = unsafe { &*right };
+    pub(crate) fn new(graph: &mut Graph, operation: BinaryOp, left: Rc<Node>, right: Rc<Node>) -> Rc<Node> {
         match operation {
             BinaryOp::Add => {
-                if *leftref == 0.0 {
+                if *left == 0.0 {
                     return right;
-                } else if *rightref == 0.0 {
+                } else if *right == 0.0 {
                     return left;
                 }
             }
             BinaryOp::Sub => {
-                if *leftref == 0.0 {
+                if *left == 0.0 {
                     return Unary::new(graph, UnaryOp::Negative, right);
-                } else if *rightref == 0.0 {
+                } else if *right == 0.0 {
                     return left;
-                } else if leftref == rightref {
+                } else if *left == *right {
                     return graph.new_constant(0.0);
                 }
             }
             BinaryOp::Mul => {
-                if *leftref == 0.0 || *rightref == 0.0 {
+                if *left == 0.0 || *right == 0.0 {
                     return graph.new_constant(0.0);
-                } else if *leftref == 1.0 {
+                } else if *left == 1.0 {
                     return right;
-                } else if *rightref == 1.0 {
+                } else if *right == 1.0 {
                     return left;
-                } else if *leftref == -1.0 {
-                    return graph.new_unary(UnaryOp::Negative, rightref);
-                } else if *rightref == -1.0 {
-                    return graph.new_unary(UnaryOp::Negative, leftref);
+                } else if *left == -1.0 {
+                    return graph.new_unary(UnaryOp::Negative, right);
+                } else if *right == -1.0 {
+                    return graph.new_unary(UnaryOp::Negative, left);
                 }
             }
             BinaryOp::Div => {
-                if *leftref == 0.0 {
+                if *left == 0.0 {
                     return graph.new_constant(0.0);
-                } else if *rightref == 1.0 {
+                } else if *right == 1.0 {
                     return left;
-                } else if *rightref == -1.0 {
-                    return graph.new_unary(UnaryOp::Negative, leftref);
-                } else if *rightref == 0.0 {
+                } else if *right == -1.0 {
+                    return graph.new_unary(UnaryOp::Negative, left);
+                } else if *right == 0.0 {
                     panic!("attempted to divide by zero",);
                 }
             }
             BinaryOp::Pow => {
-                if *leftref == 0.0 {
+                if *left == 0.0 {
                     return graph.new_constant(0.0);
-                } else if *rightref == 0.0 {
+                } else if *right == 0.0 {
                     return graph.new_constant(1.0);
-                } else if *rightref == 1.0 {
+                } else if *right == 1.0 {
                     return left;
-                } else if *rightref == 2.0 {
-                    return Self::new(graph, BinaryOp::Mul, left, left);
+                } else if *right == 2.0 {
+                    return Self::new(graph, BinaryOp::Mul, left.clone(), left.clone());
                 }
             }
         }
-        let binary = Self {
-            operation,
-            left,
-            right,
-        };
+        let binary = Self { operation, left, right };
         graph.insert(Node::new(NodeType::Binary(binary)))
     }
 
-    pub(crate) fn differentiate(&self, graph: &mut Graph, variable: &Variable) -> *const Node {
-        let left_deriv = graph.differentiate(self.left, variable);
-        let right_deriv = graph.differentiate(self.right, variable);
+    pub(crate) fn differentiate(&self, graph: &mut Graph, variable: &Variable) -> Rc<Node> {
+        let left_deriv = graph.differentiate(&self.left, variable);
+        let right_deriv = graph.differentiate(&self.right, variable);
 
         match self.operation {
             BinaryOp::Add => Self::new(graph, BinaryOp::Add, left_deriv, right_deriv),
             BinaryOp::Sub => Self::new(graph, BinaryOp::Sub, left_deriv, right_deriv),
             BinaryOp::Mul => {
-                let left = Self::new(graph, BinaryOp::Mul, left_deriv, self.right);
-                let right = Self::new(graph, BinaryOp::Mul, self.left, right_deriv);
+                let left = Self::new(graph, BinaryOp::Mul, left_deriv, self.right.clone());
+                let right = Self::new(graph, BinaryOp::Mul, self.left.clone(), right_deriv);
                 Self::new(graph, BinaryOp::Add, left, right)
             }
             BinaryOp::Div => {
-                let left = Self::new(graph, BinaryOp::Mul, left_deriv, self.right);
-                let right = Self::new(graph, BinaryOp::Mul, self.left, right_deriv);
+                let left = Self::new(graph, BinaryOp::Mul, left_deriv, self.right.clone());
+                let right = Self::new(graph, BinaryOp::Mul, self.left.clone(), right_deriv);
                 let numerator = Self::new(graph, BinaryOp::Sub, left, right);
-                let denominator = Self::new(graph, BinaryOp::Mul, self.right, self.right);
+                let denominator = Self::new(graph, BinaryOp::Mul, self.right.clone(), self.right.clone());
                 Self::new(graph, BinaryOp::Div, numerator, denominator)
             }
             BinaryOp::Pow => {
-                if let NodeType::Constant(c) = &unsafe { &*self.right }.interior {
+                if let NodeType::Constant(c) = &self.right.interior {
                     let new_exp = graph.new_constant(c.value - 1.0);
-                    let new = Self::new(graph, BinaryOp::Pow, self.left, new_exp);
-                    let deriv = Self::new(graph, BinaryOp::Mul, self.right, new);
+                    let new = Self::new(graph, BinaryOp::Pow, self.left.clone(), new_exp);
+                    let deriv = Self::new(graph, BinaryOp::Mul, self.right.clone(), new);
                     Self::new(graph, BinaryOp::Mul, left_deriv, deriv)
                 } else {
                     panic!("non-constant exponents are not yet supported");
@@ -136,12 +127,7 @@ impl BinaryOp {
         }
     }
 
-    pub fn generate_rust(
-        &self,
-        result: Ident,
-        left_value: Ident,
-        right_value: Ident,
-    ) -> TokenStream {
+    pub fn generate_rust(&self, result: Ident, left_value: Ident, right_value: Ident) -> TokenStream {
         match &self {
             Self::Add => quote! { let #result = #left_value + #right_value; },
             Self::Sub => quote! { let #result = #left_value - #right_value; },

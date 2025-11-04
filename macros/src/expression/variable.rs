@@ -22,10 +22,6 @@ impl Hash for Variable {
 
 impl Variable {
     pub(crate) fn new(name: String, parameter: bool) -> Self {
-        Self {
-            name,
-            parameter,
-            index: 0,
-        }
+        Self { name, parameter, index: 0 }
     }
 }

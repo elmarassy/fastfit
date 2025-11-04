@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
@@ -20,32 +22,32 @@ pub(crate) enum UnaryOp {
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct Unary {
     pub(crate) operation: UnaryOp,
-    pub(crate) argument: *const Node,
+    pub(crate) argument: Rc<Node>,
 }
 
 impl Unary {
-    pub(crate) fn new(graph: &mut Graph, operation: UnaryOp, argument: *const Node) -> *const Node {
-        let argref = &unsafe { &*argument }.interior;
+    pub(crate) fn new(graph: &mut Graph, operation: UnaryOp, argument: Rc<Node>) -> Rc<Node> {
+        let argref = &argument.interior;
 
         match operation {
             UnaryOp::Exp => {
                 if let NodeType::Unary(u) = argref {
                     if let UnaryOp::Log = u.operation {
-                        return u.argument;
+                        return u.argument.clone();
                     }
                 }
             }
             UnaryOp::Log => {
                 if let NodeType::Unary(u) = argref {
                     if let UnaryOp::Exp = u.operation {
-                        return u.argument;
+                        return u.argument.clone();
                     }
                 }
             }
             UnaryOp::Negative => {
                 if let NodeType::Unary(u) = argref {
                     if let UnaryOp::Negative = u.operation {
-                        return u.argument;
+                        return u.argument.clone();
                     }
                 } else if let NodeType::Constant(c) = argref {
                     return graph.new_constant(-c.value);
@@ -54,33 +56,30 @@ impl Unary {
             _ => {}
         }
 
-        let base = Unary {
-            operation,
-            argument,
-        };
+        let base = Unary { operation, argument };
         return graph.insert(Node::new(NodeType::Unary(base)));
     }
 
-    pub(crate) fn differentiate(&self, graph: &mut Graph, variable: &Variable) -> *const Node {
-        let arg_deriv = graph.differentiate(self.argument, variable);
+    pub(crate) fn differentiate(&self, graph: &mut Graph, variable: &Variable) -> Rc<Node> {
+        let arg_deriv = graph.differentiate(&self.argument, variable);
         match self.operation {
             UnaryOp::Negative => Self::new(graph, UnaryOp::Negative, arg_deriv),
             UnaryOp::Exp => {
-                let exp = Self::new(graph, UnaryOp::Exp, self.argument);
+                let exp = Self::new(graph, UnaryOp::Exp, self.argument.clone());
                 Binary::new(graph, BinaryOp::Mul, arg_deriv, exp)
             }
-            UnaryOp::Log => Binary::new(graph, BinaryOp::Div, arg_deriv, self.argument),
+            UnaryOp::Log => Binary::new(graph, BinaryOp::Div, arg_deriv, self.argument.clone()),
             UnaryOp::Sin => {
-                let cos = Self::new(graph, UnaryOp::Cos, self.argument);
+                let cos = Self::new(graph, UnaryOp::Cos, self.argument.clone());
                 Binary::new(graph, BinaryOp::Mul, arg_deriv, cos)
             }
             UnaryOp::Cos => {
-                let sin = Self::new(graph, UnaryOp::Sin, self.argument);
+                let sin = Self::new(graph, UnaryOp::Sin, self.argument.clone());
                 let negative_sin = Self::new(graph, UnaryOp::Negative, sin);
                 Binary::new(graph, BinaryOp::Mul, arg_deriv, negative_sin)
             }
             UnaryOp::Tan => {
-                let cos = Self::new(graph, UnaryOp::Cos, self.argument);
+                let cos = Self::new(graph, UnaryOp::Cos, self.argument.clone());
                 let p = graph.new_constant(-2.0);
                 let sec2 = Binary::new(graph, BinaryOp::Pow, cos, p);
                 Binary::new(graph, BinaryOp::Mul, arg_deriv, sec2)

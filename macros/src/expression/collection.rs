@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash};
+use std::{collections::HashMap, hash::Hash, rc::Rc};
 
 use crate::expression::Node;
 
@@ -10,13 +10,13 @@ pub enum Collection {
 
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub struct Array {
-    pub elements: Vec<*const Node>,
+    pub elements: Vec<Rc<Node>>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct Struct {
     pub name_order: Vec<String>,
-    pub elements: HashMap<String, *const Node>,
+    pub elements: HashMap<String, Rc<Node>>,
 }
 
 impl Hash for Struct {

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, f64};
+use std::{collections::HashMap, f64, rc::Rc};
 
 use quote::ToTokens;
 use syn::{Error, Expr, ExprField, ExprPath, FnArg, Ident, ItemFn, ItemStruct, Member, Pat, Result, Stmt, Type, TypePath, spanned::Spanned};
@@ -53,7 +53,7 @@ use crate::{
 //     graph_type: GraphType,
 // ) -> Result<(
 //     Graph,
-//     HashMap<String, *const Node>,
+//     HashMap<String, Rc<Node>>,
 //     Vec<String>,
 //     Vec<String>,
 // )> {
@@ -206,12 +206,24 @@ use crate::{
 //     Ok((graph, parameter_order, data_order))
 // }
 
-fn initialize(graph: &mut Graph, map: &mut HashMap<String, *const Node>, prefix: String, argument: &Option<*const VariableGraph>, parameter: bool) {
+fn initialize(graph: &mut Graph, map: &mut HashMap<String, Rc<Node>>, prefix: String, argument: &Option<Rc<VariableGraph>>, parameter: bool) {
+    println!("Initializing map {:?}", map);
+    println!("prefix is {}", prefix);
+    if let Some(a) = argument {
+        println!("argument {}, {:?}", unsafe { &**a }.name, unsafe { &**a }.subgraphs);
+    };
     match argument {
         Some(arg) => {
-            let variable_graph = unsafe { &**arg };
+            let variable_graph = arg.clone();
             for sub_argument in &variable_graph.subgraphs {
+                println!("formatting new arg");
+                println!("prefix {}", prefix);
+                println!("suffix {:?}", sub_argument);
                 let new_prefix = format!("{}.{}", prefix, sub_argument.0);
+                println!("new prefix is {}", new_prefix);
+                // if sub_argument.1.is_some() {
+                //     println!("{:?}", unsafe { &*sub_argument.1.unwrap() });
+                // }
                 initialize(graph, map, new_prefix, sub_argument.1, parameter);
             }
         }
@@ -221,25 +233,54 @@ fn initialize(graph: &mut Graph, map: &mut HashMap<String, *const Node>, prefix:
     }
 }
 
+fn get_field_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Field(f) => {
+            let base = get_field_name(&f.base)?;
+            match &f.member {
+                Member::Named(ident) => Some(format!("{}.{}", base, ident)),
+                Member::Unnamed(idx) => Some(format!("{}.{}", base, idx.index)),
+            }
+        }
+        Expr::Path(p) => p.path.get_ident().map(|i| i.to_string()),
+        _ => None,
+    }
+}
+
+fn handle_field(expr: &Expr, map: &HashMap<String, Rc<Node>>) -> syn::Result<Rc<Node>> {
+    if let Some(name) = get_field_name(expr) {
+        println!("{:?}", map);
+        println!("{}", name);
+        map.get(&name).cloned().ok_or_else(|| syn::Error::new_spanned(expr, format!("unknown field `{}`", name)))
+    } else {
+        Err(syn::Error::new_spanned(expr, "unsupported field expression"))
+    }
+}
 pub fn build_graph(function: &Function, model: &Model) -> Result<Graph> {
     let mut graph = Graph::new();
     println!("building graph for {:?}", function.name);
     let mut map = HashMap::new();
     let function_arguments = &function.argument_order;
-
+    println!("Argument types: {:?}", model.structs);
     for arg in function_arguments {
         match function.argument_types.get(arg).unwrap().as_str() {
             "Float" => {
                 initialize(&mut graph, &mut map, arg.clone(), &None, true);
             }
+            "f64" => {
+                initialize(&mut graph, &mut map, arg.clone(), &None, true);
+            }
+
             other => {
                 println!("Other: {}", other);
                 println!("{:?}", model.structs.keys());
-                initialize(&mut graph, &mut map, arg.clone(), &Some(&**model.structs.get(other).unwrap() as *const VariableGraph), other == "Parameter");
+                println!("prefix: {:?}, arg: {:?}", arg, model.structs.get(other).unwrap().subgraphs);
+                initialize(&mut graph, &mut map, arg.clone(), &Some(model.structs.get(other).unwrap().clone()), other == "Parameter");
             }
         }
     }
     println!("completed initialization");
+    println!("map value is {:?}", map);
 
     let function_tokens = &function.tokens;
 
@@ -247,14 +288,18 @@ pub fn build_graph(function: &Function, model: &Model) -> Result<Graph> {
         println!("{}", statement.to_token_stream());
         match statement {
             Stmt::Local(local) => {
+                println!("case 1");
                 if let Pat::Ident(pattern_ident) = &local.pat {
                     if let Some(init) = &local.init {
+                        println!("building node");
                         let result = build_node(&mut graph, &map, &init.expr, model)?;
+                        println!("built node");
                         map.insert(pattern_ident.ident.to_string(), result);
                     }
                 }
             }
             Stmt::Expr(expr, ..) => {
+                println!("case 2");
                 let value = build_node(&mut graph, &map, &expr, model)?;
                 graph.value = Some(value);
             }
@@ -270,7 +315,7 @@ pub fn build_graph(function: &Function, model: &Model) -> Result<Graph> {
     Ok(graph)
 }
 
-fn build_node(graph: &mut Graph, map: &HashMap<String, *const Node>, expr: &Expr, model: &Model) -> Result<*const Node> {
+fn build_node(graph: &mut Graph, map: &HashMap<String, Rc<Node>>, expr: &Expr, model: &Model) -> Result<Rc<Node>> {
     match expr {
         Expr::Binary(expr_bin) => {
             let left = build_node(graph, map, &expr_bin.left, model)?;
@@ -291,7 +336,7 @@ fn build_node(graph: &mut Graph, map: &HashMap<String, *const Node>, expr: &Expr
         Expr::Path(ExprPath { path, .. }) => {
             let segments: Vec<_> = path.segments.iter().collect();
             if segments.len() == 1 {
-                Ok(*map.get(&path.segments[0].ident.to_string()).unwrap())
+                Ok(map.get(&path.segments[0].ident.to_string()).unwrap().clone())
             } else if segments.len() == 2 && segments[0].ident == "Constants" {
                 match segments[1].ident.to_string().as_str() {
                     "PI" => return Ok(graph.new_constant(f64::consts::PI)),
@@ -305,27 +350,28 @@ fn build_node(graph: &mut Graph, map: &HashMap<String, *const Node>, expr: &Expr
             }
         }
 
-        Expr::Field(f) => {
-            let base_name = if let Expr::Path(base_path) = &*f.base {
-                if let Some(ident) = base_path.path.get_ident() {
-                    Some(ident.to_string())
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            match &f.member {
-                Member::Named(field_ident) => {
-                    let name = format!("{}.{}", base_name.unwrap(), field_ident.to_string());
-                    Ok(*map.get(&name).unwrap())
-                }
-                Member::Unnamed(index) => {
-                    let name = format!("{}.{}", base_name.unwrap(), index.index);
-
-                    Ok(*map.get(&name).unwrap())
-                }
-            }
+        Expr::Field(_) => {
+            handle_field(expr, map)
+            // let base_name = if let Expr::Path(base_path) = &*f.base {
+            //     if let Some(ident) = base_path.path.get_ident() {
+            //         Some(ident.to_string())
+            //     } else {
+            //         None
+            //     }
+            // } else {
+            //     None
+            // };
+            // match &f.member {
+            //     Member::Named(field_ident) => {
+            //         let name = format!("{}.{}", base_name.unwrap(), field_ident.to_string());
+            //         Ok(*map.get(&name).unwrap())
+            //     }
+            //     Member::Unnamed(index) => {
+            //         let name = format!("{}.{}", base_name.unwrap(), index.index);
+            //
+            //         Ok(*map.get(&name).unwrap())
+            //     }
+            // }
         }
         Expr::Lit(syn::ExprLit { lit, .. }) => match lit {
             syn::Lit::Float(f) => Ok(graph.new_constant(f.base10_parse::<f64>()?)),
@@ -446,7 +492,7 @@ fn build_node(graph: &mut Graph, map: &HashMap<String, *const Node>, expr: &Expr
                 return Err(syn::Error::new_spanned(ret, "`return` without value is unsupported"));
             };
             let result = build_node(graph, map, ret_expr, model)?;
-            graph.value = Some(result);
+            graph.value = Some(result.clone());
             Ok(result)
         }
         _ => Err(syn::Error::new_spanned(expr, "unsupported expression")),

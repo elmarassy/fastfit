@@ -19,7 +19,7 @@ extern crate proc_macro;
 fn generate_code(graph: &mut Graph) -> proc_macro2::TokenStream {
     let dist = translate::translate_rust(graph, "_dist".to_string(), false, false);
 
-    let log = graph.new_unary(UnaryOp::Log, graph.value.unwrap());
+    let log = graph.new_unary(UnaryOp::Log, graph.value.clone().unwrap());
     graph.value = Some(graph.new_unary(UnaryOp::Negative, log));
 
     let likelihood = translate::translate_rust(graph, "_likelihood".to_string(), false, false);
@@ -39,12 +39,7 @@ fn generate_code(graph: &mut Graph) -> proc_macro2::TokenStream {
     .into()
 }
 
-fn create_submodel(
-    base_graph: &Graph,
-    name: &String,
-    submodel: &Model,
-    model: &Model,
-) -> proc_macro2::TokenStream {
+fn create_submodel(base_graph: &Graph, name: &String, submodel: &Model, model: &Model) -> proc_macro2::TokenStream {
     todo!()
 }
 
@@ -54,12 +49,7 @@ pub fn define_model(_attr: TokenStream, module: TokenStream) -> TokenStream {
     let content = match &module.content {
         Some((_, items)) => items,
         None => {
-            return syn::Error::new_spanned(
-                module,
-                "#[define_model] can only be used on module declarations",
-            )
-            .to_compile_error()
-            .into();
+            return syn::Error::new_spanned(module, "#[define_model] can only be used on module declarations").to_compile_error().into();
         }
     };
     println!("started");
@@ -71,13 +61,12 @@ pub fn define_model(_attr: TokenStream, module: TokenStream) -> TokenStream {
     println!("made model");
     println!("{:?}", model.functions.keys());
 
-    let mut base_graph =
-        match parse::build_graph(model.functions.get("distribution").unwrap(), &model) {
-            Ok(g) => g,
-            Err(e) => {
-                return e.into_compile_error().into();
-            }
-        };
+    let mut base_graph = match parse::build_graph(model.functions.get("distribution").unwrap(), &model) {
+        Ok(g) => g,
+        Err(e) => {
+            return e.into_compile_error().into();
+        }
+    };
     println!("made graph");
     let mut submodel_code = Vec::new();
     for submodel in &model.submodels {
@@ -89,11 +78,12 @@ pub fn define_model(_attr: TokenStream, module: TokenStream) -> TokenStream {
         pub mod #model_name {
             use super::*;
             type Float = f64;
-            #model_code
             #(#content)*
+            #model_code
             #(#submodel_code)*
         }
     };
+    println!("{}", output);
     output.into()
 }
 //

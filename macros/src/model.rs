@@ -2,6 +2,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     hash::Hash,
+    rc::Rc,
 };
 
 use proc_macro2::Span;
@@ -16,22 +17,19 @@ use quote::quote;
 use crate::Graph;
 
 pub struct Model {
-    pub structs: HashMap<String, Box<VariableGraph>>,
+    pub structs: HashMap<String, Rc<VariableGraph>>,
     pub functions: HashMap<String, Function>,
     pub submodels: HashMap<String, Self>,
 }
 
+#[derive(Debug)]
 pub struct VariableGraph {
     pub name: String,
-    pub subgraphs: HashMap<String, Option<*const VariableGraph>>,
+    pub subgraphs: HashMap<String, Option<Rc<VariableGraph>>>,
 }
 
 impl VariableGraph {
-    fn build(
-        root: &ItemStruct,
-        structs: &HashMap<String, ItemStruct>,
-        graphs: &mut HashMap<String, Box<VariableGraph>>,
-    ) -> Result<*const Self> {
+    fn build(root: &ItemStruct, structs: &HashMap<String, ItemStruct>, graphs: &mut HashMap<String, Rc<VariableGraph>>) -> Result<Rc<Self>> {
         let name = root.ident.to_string();
         let mut subgraphs = HashMap::new();
         for field in &root.fields {
@@ -43,16 +41,16 @@ impl VariableGraph {
                 "Float" => {
                     subgraphs.insert(field_name, None);
                 }
+                "f64" => {
+                    subgraphs.insert(field_name, None);
+                }
                 _ => {
                     if graphs.contains_key(&field_name) {
-                        let graph = &**graphs.get(&field_name).unwrap() as *const VariableGraph;
+                        let graph = graphs.get(&field_name).unwrap().clone();
                         subgraphs.insert(field_name, Some(graph));
                     } else {
                         if !structs.contains_key(&field_type) {
-                            return Err(syn::Error::new(
-                                field_span,
-                                format!("unrecognized type: `{}`", field_type),
-                            ));
+                            return Err(syn::Error::new(field_span, format!("unrecognized type: `{}`", field_type)));
                         }
                         let new_root = structs.get(&field_type).unwrap();
                         let graph = Self::build(new_root, structs, graphs)?;
@@ -61,14 +59,8 @@ impl VariableGraph {
                 }
             }
         }
-        graphs.insert(
-            name.clone(),
-            Box::new(Self {
-                name: name.clone(),
-                subgraphs,
-            }),
-        );
-        return Ok(&**graphs.get(&name).unwrap() as *const VariableGraph);
+        graphs.insert(name.clone(), Rc::new(Self { name: name.clone(), subgraphs }));
+        return Ok(graphs.get(&name).unwrap().clone());
     }
 }
 
@@ -89,11 +81,7 @@ impl Model {
                 FnArg::Typed(pat_type) => match &*pat_type.ty {
                     Type::Path(type_path) => {
                         let segments = &type_path.path.segments;
-                        let path_string = segments
-                            .iter()
-                            .map(|segment| segment.ident.to_string())
-                            .collect::<Vec<String>>()
-                            .join("::");
+                        let path_string = segments.iter().map(|segment| segment.ident.to_string()).collect::<Vec<String>>().join("::");
                         println!("{:?}", path_string);
                         let var_name = if let Pat::Ident(pat_ident) = &*pat_type.pat {
                             pat_ident.ident.to_string()
@@ -108,10 +96,7 @@ impl Model {
                     }
                 },
                 FnArg::Receiver(_) => {
-                    return Err(syn::Error::new(
-                        f.sig.inputs.span(),
-                        "self receivers are not allowed",
-                    ));
+                    return Err(syn::Error::new(f.sig.inputs.span(), "self receivers are not allowed"));
                 }
             }
         }
@@ -119,24 +104,14 @@ impl Model {
             ReturnType::Type(_, return_type) => match &**return_type {
                 Type::Path(type_path) => {
                     let segments = &type_path.path.segments;
-                    segments
-                        .iter()
-                        .map(|segment| segment.ident.to_string())
-                        .collect::<Vec<String>>()
-                        .join("::")
+                    segments.iter().map(|segment| segment.ident.to_string()).collect::<Vec<String>>().join("::")
                 }
                 _ => {
-                    return Err(syn::Error::new(
-                        return_type.span(),
-                        "function must have a return type",
-                    ));
+                    return Err(syn::Error::new(return_type.span(), "function must have a return type"));
                 }
             },
             ReturnType::Default => {
-                return Err(syn::Error::new(
-                    f.sig.ident.span(),
-                    "function must have a return type",
-                ));
+                return Err(syn::Error::new(f.sig.ident.span(), "function must have a return type"));
             }
         };
         Ok((argument_order, argument_types, return_string))
@@ -171,10 +146,7 @@ impl Model {
 
         if base_model {
             if !struct_tokens.contains_key("Parameters") {
-                return Err(syn::Error::new(
-                    span,
-                    "model must define struct `Parameters`",
-                ));
+                return Err(syn::Error::new(span, "model must define struct `Parameters`"));
             }
             if !struct_tokens.contains_key("Data") {
                 return Err(syn::Error::new(span, "model must define struct `Data`"));
@@ -187,16 +159,10 @@ impl Model {
             }
         } else {
             if !struct_tokens.contains_key("Parameters") {
-                return Err(syn::Error::new(
-                    span,
-                    "submodel must define struct `Parameters`",
-                ));
+                return Err(syn::Error::new(span, "submodel must define struct `Parameters`"));
             }
             if !function_tokens.contains_key("transformation") {
-                return Err(syn::Error::new(
-                    span,
-                    "submodel must define fn `transformation`",
-                ));
+                return Err(syn::Error::new(span, "submodel must define fn `transformation`"));
             }
         }
 
@@ -214,70 +180,32 @@ impl Model {
             let (argument_order, argument_types, return_type) = Self::get_types(&function)?;
             if base_model {
                 if name == "distribution" {
-                    if argument_order.len() != 2
-                        || !argument_types
-                            .values()
-                            .any(|s| s == "Parameters" || s == "self::Parameters")
-                        || !argument_types
-                            .values()
-                            .any(|s| s == "Data" || s == "self::Data")
+                    if argument_order.len() != 2 || !argument_types.values().any(|s| s == "Parameters" || s == "self::Parameters") || !argument_types.values().any(|s| s == "Data" || s == "self::Data")
                     {
-                        return Err(syn::Error::new(
-                            function.sig.inputs.span(),
-                            "`distribution` must take one argument of type `Parameters` and one of type `Data`",
-                        ));
+                        return Err(syn::Error::new(function.sig.inputs.span(), "`distribution` must take one argument of type `Parameters` and one of type `Data`"));
                     }
-                    if return_type != "Float" {
-                        return Err(syn::Error::new(
-                            function.sig.output.span(),
-                            "`distribution` return type must be `Float`",
-                        ));
+                    if return_type != "Float" && return_type != "f64" {
+                        return Err(syn::Error::new(function.sig.output.span(), "`distribution` return type must be `Float` or `f64`"));
                     }
                 } else if name == "generation" {
-                    if argument_order.len() != 1
-                        || !argument_types
-                            .values()
-                            .any(|s| s == "Parameters" || s == "self::Parameters")
-                    {
-                        return Err(syn::Error::new(
-                            function.sig.inputs.span(),
-                            "`generation` must take one argument of type `Parameters`",
-                        ));
+                    if argument_order.len() != 1 || !argument_types.values().any(|s| s == "Parameters" || s == "self::Parameters") {
+                        return Err(syn::Error::new(function.sig.inputs.span(), "`generation` must take one argument of type `Parameters`"));
                     }
                     if return_type != "Data" && return_type != "self::Data" {
-                        return Err(syn::Error::new(
-                            function.sig.output.span(),
-                            "`generation` return type must be `Data`",
-                        ));
+                        return Err(syn::Error::new(function.sig.output.span(), "`generation` return type must be `Data`"));
                     }
                 }
             } else {
                 if name == "transformation" {
-                    if argument_order.len() != 1
-                        || !argument_types
-                            .values()
-                            .any(|s| s == "Parameters" || s == "self::Parameters")
-                    {
-                        return Err(syn::Error::new(
-                            function.sig.inputs.span(),
-                            "`transformation` must take one argument of type `self::Parameters`",
-                        ));
+                    if argument_order.len() != 1 || !argument_types.values().any(|s| s == "Parameters" || s == "self::Parameters") {
+                        return Err(syn::Error::new(function.sig.inputs.span(), "`transformation` must take one argument of type `self::Parameters`"));
                     }
                     if return_type != "super::Parameters" {
-                        return Err(syn::Error::new(
-                            function.sig.output.span(),
-                            "`transformation` return type must be `super::Parameters`",
-                        ));
+                        return Err(syn::Error::new(function.sig.output.span(), "`transformation` return type must be `super::Parameters`"));
                     }
                 }
             }
-            let f = Function {
-                name: name.clone(),
-                argument_order,
-                argument_types,
-                tokens: function,
-                graph: RefCell::new(None),
-            };
+            let f = Function { name: name.clone(), argument_order, argument_types, tokens: function, graph: RefCell::new(None) };
             functions.insert(name, f);
         }
 
@@ -309,11 +237,7 @@ impl Model {
             return Err(error);
         }
 
-        Ok(Self {
-            structs,
-            functions,
-            submodels,
-        })
+        Ok(Self { structs, functions, submodels })
     }
 }
 
