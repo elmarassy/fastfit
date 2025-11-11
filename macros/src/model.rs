@@ -14,7 +14,441 @@ use syn::{
 
 use quote::quote;
 
-use crate::Graph;
+use crate::{Graph, expression::Node};
+
+pub struct Model {
+    pub graph: Graph,
+    pub structs: HashSet<String>,
+    pub functions: HashSet<String>,
+}
+
+impl Parse for Model {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let mut functions = HashMap::new();
+        let mut structs = HashMap::new();
+        let mut modules = HashMap::new();
+
+        let mut graph = Graph::new();
+
+        while !input.is_empty() {
+            let item: Item = input.parse()?;
+
+            match item {
+                Item::Fn(f) => {
+                    let function_name = f.sig.ident.to_string();
+                    functions.insert(function_name, f);
+                }
+                Item::Struct(s) => {
+                    let struct_name = s.ident.to_string();
+                    structs.insert(struct_name, s);
+                }
+                Item::Mod(m) => {
+                    let module_name = m.ident.to_string();
+                    modules.insert(module_name, m);
+                }
+                _ => {
+                    return Err(syn::Error::new(item.span(), "unsupported model component"));
+                }
+            }
+        }
+        for (struct_name, struct_tokens) in structs {
+            for field in struct_tokens.fields {
+                let field_type = field.ty
+            }
+        }
+        todo!()
+    }
+}
+
+//
+// pub struct Model {
+//     pub(crate) parameters: ItemStruct,
+//     pub(crate) data: ItemStruct,
+//     pub(crate) distribution: ItemFn,
+//     pub(crate) generation: ItemFn,
+//     pub(crate) helpers: Vec<ItemFn>,
+//     pub(crate) submodels: Vec<ItemMod>,
+// }
+//
+// impl Parse for Model {
+//     fn parse(input: ParseStream) -> Result<Self> {
+//         let mut parameters = None;
+//         let mut data = None;
+//         let mut distribution = None;
+//         let mut generation = None;
+//         let mut helpers = Vec::new();
+//         let mut submodels = Vec::new();
+//
+//         while !input.is_empty() {
+//             let item: Item = input.parse()?;
+//
+//             match item {
+//                 Item::Fn(f) => {
+//                     let name = f.sig.ident.to_string();
+//                     match name.as_str() {
+//                         "distribution" => {
+//                             if distribution.is_some() {
+//                                 return Err(syn::Error::new(
+//                                     f.sig.ident.span(),
+//                                     "duplicate function definition for `distribution`",
+//                                 ));
+//                             }
+//                             match &f.sig.output {
+//                                 ReturnType::Type(_, return_type) => match &**return_type {
+//                                     Type::Path(type_path) => {
+//                                         let segments = &type_path.path.segments;
+//                                         if segments.len() != 1 || segments[0].ident != "Float" {
+//                                             return Err(syn::Error::new(
+//                                                 return_type.span(),
+//                                                 "distribution function must return `Float`",
+//                                             ));
+//                                         }
+//                                     }
+//                                     _ => {
+//                                         return Err(syn::Error::new(
+//                                             return_type.span(),
+//                                             "distribution function must return `Float`",
+//                                         ));
+//                                     }
+//                                 },
+//                                 ReturnType::Default => {
+//                                     return Err(syn::Error::new(
+//                                         f.sig.ident.span(),
+//                                         "distribution function must return `Float`",
+//                                     ));
+//                                 }
+//                             }
+//                             if f.sig.inputs.len() != 1 {
+//                                 return Err(syn::Error::new(
+//                                     f.sig.inputs.span(),
+//                                     "distribution function must take one argument of type `Parameters`",
+//                                 ));
+//                             }
+//                             match &f.sig.inputs[0] {
+//                                 FnArg::Typed(PatType { ty, .. }) => match &**ty {
+//                                     Type::Path(type_path) => {
+//                                         let segments = &type_path.path.segments;
+//                                         if segments.len() != 1 || segments[0].ident != "Parameters"
+//                                         {
+//                                             return Err(syn::Error::new(
+//                                                 ty.span(),
+//                                                 "argument must be of type `Parameters`",
+//                                             ));
+//                                         } else if segments.len() != 2
+//                                             || segments[0].ident != "self"
+//                                             || segments[1].ident != "Parameters"
+//                                         {
+//                                             return Err(syn::Error::new(
+//                                                 ty.span(),
+//                                                 "argument must be of type `self::Parameters`",
+//                                             ));
+//                                         }
+//                                     }
+//                                     _ => {
+//                                         return Err(syn::Error::new(
+//                                             ty.span(),
+//                                             "argument must be of type `Parameters`",
+//                                         ));
+//                                     }
+//                                 },
+//                                 FnArg::Receiver(_) => {
+//                                     return Err(syn::Error::new(
+//                                         f.sig.inputs.span(),
+//                                         "`distribution` must not have a self receiver",
+//                                     ));
+//                                 }
+//                             }
+//
+//                             distribution = Some(f);
+//                         }
+//                         "generation" => {
+//                             if generation.is_some() {
+//                                 return Err(syn::Error::new(
+//                                     f.sig.ident.span(),
+//                                     "duplicate function definition for `generation`",
+//                                 ));
+//                             }
+//                             match &f.sig.output {
+//                                 ReturnType::Type(_, return_type) => match &**return_type {
+//                                     Type::Path(type_path) => {
+//                                         let segments = &type_path.path.segments;
+//                                         if segments.len() != 1 || segments[0].ident != "Data" {
+//                                             return Err(syn::Error::new(
+//                                                 return_type.span(),
+//                                                 "generation function must return `Data`",
+//                                             ));
+//                                         }
+//                                     }
+//                                     _ => {
+//                                         return Err(syn::Error::new(
+//                                             return_type.span(),
+//                                             "generation function must return `Data`",
+//                                         ));
+//                                     }
+//                                 },
+//                                 ReturnType::Default => {
+//                                     return Err(syn::Error::new(
+//                                         f.sig.ident.span(),
+//                                         "generation function must return `Data`",
+//                                     ));
+//                                 }
+//                             }
+//                             if f.sig.inputs.len() != 1 {
+//                                 return Err(syn::Error::new(
+//                                     f.sig.inputs.span(),
+//                                     "generation function must take one argument of type `Parameters`",
+//                                 ));
+//                             }
+//                             match &f.sig.inputs[0] {
+//                                 FnArg::Typed(PatType { ty, .. }) => match &**ty {
+//                                     Type::Path(type_path) => {
+//                                         let segments = &type_path.path.segments;
+//                                         if segments.len() != 1 || segments[0].ident != "Parameters"
+//                                         {
+//                                             return Err(syn::Error::new(
+//                                                 ty.span(),
+//                                                 "argument must be of type `Parameters`",
+//                                             ));
+//                                         } else if segments.len() != 2
+//                                             || segments[0].ident != "self"
+//                                             || segments[1].ident != "Parameters"
+//                                         {
+//                                             return Err(syn::Error::new(
+//                                                 ty.span(),
+//                                                 "argument must be of type `self::Parameters`",
+//                                             ));
+//                                         }
+//                                     }
+//                                     _ => {
+//                                         return Err(syn::Error::new(
+//                                             ty.span(),
+//                                             "argument must be of type `Parameters`",
+//                                         ));
+//                                     }
+//                                 },
+//                                 FnArg::Receiver(_) => {
+//                                     return Err(syn::Error::new(
+//                                         f.sig.inputs.span(),
+//                                         "`generation` must not have a self receiver",
+//                                     ));
+//                                 }
+//                             }
+//                             generation = Some(f);
+//                         }
+//                         _ => {
+//                             helpers.push(f);
+//                         }
+//                     }
+//                 }
+//                 Item::Struct(s) => match s.ident.to_string().as_str() {
+//                     "Parameters" => {
+//                         if parameters.is_some() {
+//                             return Err(syn::Error::new(
+//                                 s.ident.span(),
+//                                 "duplicate struct definition for `Parameters`",
+//                             ));
+//                         }
+//                         parameters = Some(s);
+//                     }
+//                     "Data" => {
+//                         if data.is_some() {
+//                             return Err(syn::Error::new(
+//                                 s.ident.span(),
+//                                 "duplicate struct definition for `Data`",
+//                             ));
+//                         }
+//                         data = Some(s);
+//                     }
+//                     name => {
+//                         return Err(syn::Error::new(
+//                             s.ident.span(),
+//                             format!("unsupported struct definition for `{}`", name),
+//                         ));
+//                     }
+//                 },
+//                 Item::Mod(m) => {
+//                     submodels.push(m);
+//                 }
+//                 _ => {
+//                     return Err(syn::Error::new(item.span(), "unsupported model component"));
+//                 }
+//             }
+//         }
+//
+//         let parameters = parameters
+//             .ok_or_else(|| syn::Error::new(input.span(), "missing required struct `Parameters`"))?;
+//         let data =
+//             data.ok_or_else(|| syn::Error::new(input.span(), "missing required struct `Data`"))?;
+//         let distribution = distribution.ok_or_else(|| {
+//             syn::Error::new(input.span(), "missing required function `distribution`")
+//         })?;
+//         let generation = generation.ok_or_else(|| {
+//             syn::Error::new(input.span(), "missing required function `generation`")
+//         })?;
+//
+//         Ok(Model {
+//             distribution,
+//             parameters,
+//             data,
+//             generation,
+//             helpers,
+//             submodels,
+//         })
+//     }
+// }
+//
+// pub struct SubModel {
+//     pub(crate) transformation: ItemFn,
+//     pub(crate) parameters: ItemStruct,
+// }
+//
+// impl Parse for SubModel {
+//     fn parse(input: ParseStream) -> Result<Self> {
+//         let mut transformation = None;
+//         let mut parameters = None;
+//
+//         while !input.is_empty() {
+//             let item: Item = input.parse()?;
+//
+//             match item {
+//                 Item::Struct(s) => match s.ident.to_string().as_str() {
+//                     "Parameters" => {
+//                         if parameters.is_some() {
+//                             return Err(syn::Error::new(
+//                                 s.ident.span(),
+//                                 "duplicate struct definition for `Parameters`",
+//                             ));
+//                         }
+//                         parameters = Some(s);
+//                     }
+//                     name => {
+//                         return Err(syn::Error::new(
+//                             s.ident.span(),
+//                             format!("unsupported struct definition for `{}`", name),
+//                         ));
+//                     }
+//                 },
+//
+//                 Item::Fn(f) => {
+//                     let name = f.sig.ident.to_string();
+//                     match name.as_str() {
+//                         "transform" => {
+//                             if transformation.is_some() {
+//                                 return Err(syn::Error::new(
+//                                     f.sig.ident.span(),
+//                                     "duplicate function definition for `transform`",
+//                                 ));
+//                             }
+//
+//                             match &f.sig.output {
+//                                 ReturnType::Type(_, return_type) => match &**return_type {
+//                                     Type::Path(type_path) => {
+//                                         let segments: Vec<_> =
+//                                             type_path.path.segments.iter().collect();
+//                                         if segments.len() != 2
+//                                             || segments[0].ident != "super"
+//                                             || segments[1].ident != "Parameters"
+//                                         {
+//                                             return Err(syn::Error::new(
+//                                                 return_type.span(),
+//                                                 "must return `super::Parameters`",
+//                                             ));
+//                                         }
+//                                     }
+//                                     _ => {
+//                                         return Err(syn::Error::new(
+//                                             return_type.span(),
+//                                             "must return `super::Parameters`",
+//                                         ));
+//                                     }
+//                                 },
+//                                 ReturnType::Default => {
+//                                     return Err(syn::Error::new(
+//                                         f.sig.ident.span(),
+//                                         "must return `super::Parameters`",
+//                                     ));
+//                                 }
+//                             }
+//                             if f.sig.inputs.len() != 1 {
+//                                 return Err(syn::Error::new(
+//                                     f.sig.inputs.span(),
+//                                     "must take exactly one argument",
+//                                 ));
+//                             }
+//                             for arg in &f.sig.inputs {
+//                                 match arg {
+//                                     FnArg::Typed(PatType { ty, .. }) => match &**ty {
+//                                         Type::Path(type_path) => {
+//                                             let segments: Vec<_> =
+//                                                 type_path.path.segments.iter().collect();
+//                                             if segments.len() == 1 {
+//                                                 if segments[0].ident != "Parameters" {
+//                                                     return Err(syn::Error::new(
+//                                                         ty.span(),
+//                                                         "argument must be of type `Parameters`",
+//                                                     ));
+//                                                 }
+//                                             } else if segments.len() != 2
+//                                                 || segments[0].ident != "self"
+//                                                 || segments[1].ident != "Parameters"
+//                                             {
+//                                                 return Err(syn::Error::new(
+//                                                     ty.span(),
+//                                                     "argument must be of type `self::Parameters`",
+//                                                 ));
+//                                             }
+//                                         }
+//                                         _ => {
+//                                             return Err(syn::Error::new(
+//                                                 ty.span(),
+//                                                 "argument must be of type `self::Parameters`",
+//                                             ));
+//                                         }
+//                                     },
+//                                     FnArg::Receiver(_) => {
+//                                         return Err(syn::Error::new(
+//                                             arg.span(),
+//                                             "`transform` must not have a self receiver",
+//                                         ));
+//                                     }
+//                                 }
+//                             }
+//
+//                             transformation = Some(f);
+//                         }
+//                         _ => {
+//                             return Err(syn::Error::new(
+//                                 f.sig.ident.span(),
+//                                 format!(
+//                                     "unsupported function definition for `{}`; accepted functions are `transform`",
+//                                     name,
+//                                 ),
+//                             ));
+//                         }
+//                     }
+//                 }
+//                 _ => {
+//                     return Err(syn::Error::new(
+//                         item.span(),
+//                         "unsupported submodel component; only `fn transform(...)` and `struct Parameters {...}` may be defined here",
+//                     ));
+//                 }
+//             }
+//         }
+//
+//         let transformation = transformation.ok_or_else(|| {
+//             syn::Error::new(input.span(), "missing required function `transform`")
+//         })?;
+//
+//         let parameters = parameters
+//             .ok_or_else(|| syn::Error::new(input.span(), "missing required struct `Parameters`"))?;
+//
+//         Ok(SubModel {
+//             transformation,
+//             parameters,
+//         })
+//     }
+// }
 
 pub struct Model {
     pub structs: HashMap<String, Rc<VariableGraph>>,

@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use macros::define_model;
 mod model;
 
@@ -149,13 +151,48 @@ mod gaussian {
 //     }
 // }
 //
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+//
+//
+//
+//
+// #[derive(Debug, Eq, PartialEq, Hash)]
+// struct N {
+//     num: usize,
+// }
+//
+// pub struct G {
+//     nodes: HashSet<Box<N>>,
+// }
+//
+// pub fn test_g(n: usize) -> usize {
+//     let mut g = G { nodes: HashSet::new() };
+//     let mut tests = Vec::new();
+//     for i in 0..n {
+//         let node = N { num: i };
+//         let b = Box::new(node);
+//         let pointer = b.as_ref() as *const N;
+//
+//         g.nodes.insert(b);
+//         tests.push(pointer);
+//     }
+//     let mut failures = Vec::new();
+//     for i in 0..n {
+//         let p = tests[i];
+//         if unsafe { &*p }.num != i {
+//             failures.push(i);
+//             println!("Failed on {}, found value {}", i, unsafe { &*p }.num);
+//         }
+//     }
+//     failures.len()
+// }
+//
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//
+//     #[test]
+//     fn it_works() {
+//         let result = test_g(100_000_000);
+//         println!("{}", result);
+//     }
+// }

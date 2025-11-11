@@ -22,12 +22,12 @@ pub(crate) enum UnaryOp {
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct Unary {
     pub(crate) operation: UnaryOp,
-    pub(crate) argument: Rc<Node>,
+    pub(crate) argument: *const Node,
 }
 
 impl Unary {
-    pub(crate) fn new(graph: &mut Graph, operation: UnaryOp, argument: Rc<Node>) -> Rc<Node> {
-        let argref = &argument.interior;
+    pub(crate) fn new(graph: &mut Graph, operation: UnaryOp, argument: *const Node) -> *const Node {
+        let argref = &unsafe { &*argument }.interior;
 
         match operation {
             UnaryOp::Exp => {
@@ -60,8 +60,8 @@ impl Unary {
         return graph.insert(Node::new(NodeType::Unary(base)));
     }
 
-    pub(crate) fn differentiate(&self, graph: &mut Graph, variable: &Variable) -> Rc<Node> {
-        let arg_deriv = graph.differentiate(&self.argument, variable);
+    pub(crate) fn differentiate(&self, graph: &mut Graph, variable: &Variable) -> *const Node {
+        let arg_deriv = graph.differentiate(self.argument, variable);
         match self.operation {
             UnaryOp::Negative => Self::new(graph, UnaryOp::Negative, arg_deriv),
             UnaryOp::Exp => {
